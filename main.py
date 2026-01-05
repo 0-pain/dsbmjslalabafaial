@@ -9,7 +9,7 @@ from gate import *  # بواباتك الحالية
 import time
 
 # ================= CONFIG =================
-TOKEN = "8347784927:AAHG0heG5Tck9hpLYAuXC3i4Q94Pjk6eEF8"
+TOKEN = "7955465674:AAHDr8dJm1BMTj5Jw3rqI1ApvAYsyk0Zhqc"
 CHANNEL_USERNAME = "@tesgvava"
 
 USERS_FILE = "users.json"
