@@ -21,6 +21,7 @@ PROXY_FILE='proxies.txt'
 
 stop_flags = {}   # user_id : Event
 ADMIN_ID = 8163245201  # أدمن البوت
+MAX_RETRY = 3  # Retry عند مشاكل الشبكة أو Gateway Error
 
 # ================= USERS =================
 def load_users():
@@ -62,10 +63,10 @@ def remove_points(uid, amount):
     save_users(users)
     return True
 
-#help cmd
+# ================= HELP CMD =================
 @bot.message_handler(commands=["cmds", "help"])
 def show_commands(message):
-    text = """
+    text = f"""
 📜 <b>Bot Commands List</b>
 
 👤 <b>Users</b>
@@ -102,46 +103,38 @@ def safe_edit(chat_id, msg_id, text, kb=None):
         bot.edit_message_text(text, chat_id, msg_id, reply_markup=kb)
     except:
         pass
+
+# ================= PROXY CMD =================
 @bot.message_handler(commands=['add-prox'])
 def add_proxy(message):
     if message.from_user.id != ADMIN_ID:
         return
-
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         bot.reply_to(message, "❗ الصيغة:\n/add-prox host:port:user:pass")
         return
-
     proxy = parts[1].strip()
-
     with open(PROXY_FILE, "a", encoding="utf-8") as f:
         f.write("\n"+proxy + "\n")
-
     bot.reply_to(message, "✅ تم إضافة البروكسي بنجاح")
+
 @bot.message_handler(commands=['rmp'])
 def remove_proxy(message):
     if message.from_user.id != ADMIN_ID:
         return
-
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         bot.reply_to(message, "❗ الصيغة:\n/rmp host:port:user:pass")
         return
-
     target = parts[1].strip()
-
     with open(PROXY_FILE, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
-
     if target not in lines:
         bot.reply_to(message, "⚠️ البروكسي غير موجود")
         return
-
     lines.remove(target)
-
     with open(PROXY_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + ("\n" if lines else ""))
-
     bot.reply_to(message, "🗑️ تم حذف البروكسي")
 
 # ================= ADMIN COMMANDS =================
@@ -181,8 +174,6 @@ def remove_points_cmd(msg):
 def user_info_cmd(msg):
     uid = msg.from_user.id
     user = get_user(uid)
-
-    # نحاول الحصول على بيانات المستخدم من Telegram (optional)
     try:
         tg_user = bot.get_chat(uid)
         username = f"@{tg_user.username}" if tg_user.username else "none"
@@ -190,9 +181,7 @@ def user_info_cmd(msg):
     except:
         username = "none"
         name = "none"
-    
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     text = (
         f"[+] ID: {uid}\n"
         f"[+] Username: {username}\n"
@@ -200,9 +189,7 @@ def user_info_cmd(msg):
         f"[+] Points: {user['points']}\n"
         f"[+] Time: {now}"
     )
-
     bot.reply_to(msg, text)
-
 
 # ================= START =================
 @bot.message_handler(commands=["start"])
@@ -235,11 +222,22 @@ def handle_file(msg):
     kb.add(types.InlineKeyboardButton("⏹ STOP", callback_data="stop"))
     bot.send_message(uid, "اختر البوابة", reply_markup=kb)
 
+# ================= RETRY HELPER =================
+def run_with_retry(func, cc, retries=MAX_RETRY):
+    last = "ERROR in gateway"
+    for _ in range(retries):
+        try:
+            last = str(func(cc))
+            if "ERROR in gateway" not in last and "Network is unreachable" not in last:
+                break
+        except:
+            pass
+    return last
+
 # ================= GATES =================
 def gate_strip(call, combo):
     user_id = call.from_user.id
-    gate = "Strip_Auth"
-    dd = err = auth = d3=0
+    dd = err = auth = d3 = 0
     if user_id not in stop_flags:
         stop_flags[user_id] = threading.Event()
     stop_flags[user_id].clear()
@@ -249,7 +247,7 @@ def gate_strip(call, combo):
         with open(combo_file, "r") as file:
             cards = file.readlines()
             total = len(cards)
-            for index, cc in enumerate(cards, start=1):
+            for cc in cards:
                 if stop_flags[user_id].is_set():
                     safe_edit(call.message.chat.id, call.message.message_id, "⛔ STOPPED")
                     return
@@ -258,13 +256,7 @@ def gate_strip(call, combo):
                     safe_edit(call.message.chat.id, call.message.message_id, "❌ Points غير كافية")
                     return
                 cc = cc.strip()
-                start_time = time.time()
-                try:
-                    last = str(strip_auth(cc))
-                except Exception as e:
-                    print(e)
-                    last = "ERROR in gateway"
-                execution_time = time.time() - start_time
+                last = run_with_retry(strip_auth, cc)
                 remove_points(user_id, POINTS_PER_CARD)
                 user = get_user(user_id)
                 mes = types.InlineKeyboardMarkup(row_width=1)
@@ -279,54 +271,49 @@ def gate_strip(call, combo):
                     types.InlineKeyboardButton(f"• Points ➜ {user['points']}", callback_data='x'),
                     types.InlineKeyboardButton("⏹ STOP", callback_data='stop')
                 )
-                safe_edit(call.message.chat.id, call.message.message_id, "▶️ PPC NORMAL Donate NEW Running ...", mes)
-                # ========== IF-ELSE ORIGINAL ==========
-                authed=f"""
+                safe_edit(call.message.chat.id, call.message.message_id, "▶️ Strip Auth Running ...", mes)
+
+                authed = f"""
 [+]  Hi New Approved here 🔥!
 [+] CC : {cc}
 [+] Gate : #Strip_Auth.
 [+] Response: Added ✅
 [+] Dev : {adus}
 """
-                if "added" in last:
-                	auth += 1
-                	bot.send_message(user_id, authed)
-                elif "Failed_to_add_3DS" in last:
-                	d3+=1
+                if "added" in last: auth += 1; bot.send_message(user_id, authed)
+                elif "Failed_to_add_3DS" in last: d3 += 1
                 elif 'unknown' in last: dd += 1
                 elif 'ERROR in gateway' in last: err += 1
                 elif ("Network is unreachable" in last
-                or "502 Bad Gateway" in last
-                or "ProxyError" in last
-                or "Unable to connect to proxy" in last
-                or "Max retries exceeded" in last
-                or "Tunnel connection failed" in last
-                or "ConnectTimeout" in last
-                or "ReadTimeout" in last
-                or "Caused by ProxyError" in last
-                ):
-                	bot.send_message(user_id,text=f"Proxy error : card: {cc}")
-	
-
+                      or "502 Bad Gateway" in last
+                      or "ProxyError" in last
+                      or "Unable to connect to proxy" in last
+                      or "Max retries exceeded" in last
+                      or "Tunnel connection failed" in last
+                      or "ConnectTimeout" in last
+                      or "ReadTimeout" in last
+                      or "Caused by ProxyError" in last):
+                    bot.send_message(user_id,text=f"Proxy error : card: {cc}")
                 else: dd += 1
     except Exception as e:
         print(e)
     safe_edit(call.message.chat.id, call.message.message_id, "✅ FINISHED")
 
+
+#nurmal ppc 
 def gate_ppc2(call, combo):
     user_id = call.from_user.id
-    gate = "PPC_DONATE_Normal "
     dd = err = charge = 0
     if user_id not in stop_flags:
         stop_flags[user_id] = threading.Event()
     stop_flags[user_id].clear()
-    safe_edit(call.message.chat.id, call.message.message_id, "⏳ Checking PPC Donate NEW ...")
+    safe_edit(call.message.chat.id, call.message.message_id, "⏳ Checking PPC Normal ...")
     combo_file = f"combo_{user_id}.txt" if combo is None else combo
     try:
         with open(combo_file, "r") as file:
             cards = file.readlines()
             total = len(cards)
-            for index, cc in enumerate(cards, start=1):
+            for cc in cards:
                 if stop_flags[user_id].is_set():
                     safe_edit(call.message.chat.id, call.message.message_id, "⛔ STOPPED")
                     return
@@ -335,13 +322,7 @@ def gate_ppc2(call, combo):
                     safe_edit(call.message.chat.id, call.message.message_id, "❌ Points غير كافية")
                     return
                 cc = cc.strip()
-                start_time = time.time()
-                try:
-                    last = str(ppc001(cc))
-                except Exception as e:
-                    print(e)
-                    last = "ERROR in gateway"
-                execution_time = time.time() - start_time
+                last = run_with_retry(ppc001, cc)
                 remove_points(user_id, POINTS_PER_CARD)
                 user = get_user(user_id)
                 mes = types.InlineKeyboardMarkup(row_width=1)
@@ -355,55 +336,36 @@ def gate_ppc2(call, combo):
                     types.InlineKeyboardButton(f"• Points ➜ {user['points']}", callback_data='x'),
                     types.InlineKeyboardButton("⏹ STOP", callback_data='stop')
                 )
-                safe_edit(call.message.chat.id, call.message.message_id, "▶️ PPC NORMAL Donate NEW Running ...", mes)
-                # ========== IF-ELSE ORIGINAL ==========
-                charges=f"""
-[+]  Hi New charge here 🔥!
+                safe_edit(call.message.chat.id, call.message.message_id, "▶️ PPC Normal Running ...", mes)
+
+                charges = f"""
+[+] Hi New charge here 🔥!
 [+] CC : {cc}
-[+] Gate : PayPal cvv Normal  1$.
-[+] Response: #Charge ! 
-[+] Amount: 1$ 
+[+] Gate : PPC Normal
+[+] Response: #{last}
 [+] Dev : {adus}
 """
-                if "Charge !" in last:
-                	charge += 1
-                	bot.send_message(user_id, text=charges)
-                elif 'unknown' in last:
-                	dd += 1
-                elif ("Network is unreachable" in last
-                or "502 Bad Gateway" in last
-                or "ProxyError" in last
-                or "Unable to connect to proxy" in last
-                or "Max retries exceeded" in last
-                or "Tunnel connection failed" in last
-                or "ConnectTimeout" in last
-                or "ReadTimeout" in last
-                or "Caused by ProxyError" in last
-                ):
-                	bot.send_message(user_id,text=f"Proxy error : card: {cc}")
+                if "Charge !" in last: charge += 1; bot.send_message(user_id, charges)
+                elif 'unknown' in last: dd += 1
                 elif 'ERROR in gateway' in last: err += 1
                 else: dd += 1
     except Exception as e:
         print(e)
     safe_edit(call.message.chat.id, call.message.message_id, "✅ FINISHED")
-#end ppc normal
-
-#ppc full start
-
-def gate_ppc3(call, combo=None):  # تعديل لقبول combo
+#ppc full
+def gate_ppc3(call, combo):
     user_id = call.from_user.id
-    gate = "PPC_DONATE_1$"
     dd = err = charge = CVV = funds = 0
     if user_id not in stop_flags:
         stop_flags[user_id] = threading.Event()
     stop_flags[user_id].clear()
-    safe_edit(call.message.chat.id, call.message.message_id, "⏳ Checking PPC Donate 1$ FULL ...")
+    safe_edit(call.message.chat.id, call.message.message_id, "⏳ Checking PPC FULL ...")
     combo_file = f"combo_{user_id}.txt" if combo is None else combo
     try:
         with open(combo_file, "r") as file:
             cards = file.readlines()
             total = len(cards)
-            for index, cc in enumerate(cards, start=1):
+            for cc in cards:
                 if stop_flags[user_id].is_set():
                     safe_edit(call.message.chat.id, call.message.message_id, "⛔ STOPPED")
                     return
@@ -412,13 +374,7 @@ def gate_ppc3(call, combo=None):  # تعديل لقبول combo
                     safe_edit(call.message.chat.id, call.message.message_id, "❌ Points غير كافية")
                     return
                 cc = cc.strip()
-                start_time = time.time()
-                try:
-                    last = str(ppc(cc))
-                except Exception as e:
-                    print(e)
-                    last = "ERROR in gateway"
-                execution_time = time.time() - start_time
+                last = run_with_retry(ppc, cc)
                 remove_points(user_id, POINTS_PER_CARD)
                 user = get_user(user_id)
                 mes = types.InlineKeyboardMarkup(row_width=1)
@@ -434,63 +390,18 @@ def gate_ppc3(call, combo=None):  # تعديل لقبول combo
                     types.InlineKeyboardButton(f"• Points ➜ {user['points']}", callback_data='x'),
                     types.InlineKeyboardButton("⏹ STOP", callback_data='stop')
                 )
-                safe_edit(call.message.chat.id, call.message.message_id, "▶️ PPC Donate NEW Running ...", mes)
-                # ========== IF-ELSE ORIGINAL ==========
-                charges=f"""
-[+]  Hi New charge here 🔥!
+                safe_edit(call.message.chat.id, call.message.message_id, "▶️ PPC FULL Running ...", mes)
+
+                charges = f"""
+[+] Hi New charge here 🔥!
 [+] CC : {cc}
-[+] Gate : PayPal cvv 1$.
-[+] Response: #{last} 
-[+] Amount: 1$ 
+[+] Gate : PPC FULL
+[+] Response: #{last}
 [+] Dev : {adus}
 """
-                if 'PAYER_CANNOT_PAY' in last: dd += 1
-                elif 'DECLINED' in last: dd += 1
-                elif 'ACCESS_DENIED' in last: dd += 1
-                elif 'DECLINED_DUE_TO_UPDATED_ACCOUNT.' in last: dd += 1
-                elif 'AMOUNT_EXCEEDED.' in last: dd += 1
-                elif 'TRANSACTION_NOT_PERMITTED.' in last: dd += 1
-                elif 'CVV2/CSC does not match.' in last: dd += 1
-                elif 'TRANSACTION_CANNOT_BE_COMPLETED.' in last: dd += 1
-                elif "Charge !" in last:
-                	charge += 1
-                	bot.send_message(user_id,text=charges)
-                elif 'INSTRUMENT_DECLINED' in last: dd += 1
-                elif 'AUTHENTICATION_FAILURE' in last: dd += 1
-                elif 'RATE_LIMIT_REACHED' in last: dd += 1
-                elif 'RESTRICTED_OR_INACTIVE_ACCOUNT.' in last: dd += 1
-                elif 'INVALID_OR_RESTRICTED_CARD' in last: dd += 1
-                elif 'DECLINED_PLEASE_RETRY.' in last: dd += 1
-                elif 'SUSPECTED_FRAUD.' in last: dd += 1
-                elif 'ACCOUNT_BLOCKED_BY_ISSUER.' in last: dd += 1
-                elif 'GENERIC_DECLINE.' in last: dd += 1
-                elif 'SECURITY_VIOLATION' in last: dd += 1
-                elif 'INSUFFICIENT_FUNDS.' in last:
-                	funds += 1
-                	bot.send_message(user_id,text=charges)
-                elif ("Network is unreachable" in last
-                or "502 Bad Gateway" in last
-                or "ProxyError" in last
-                or "Unable to connect to proxy" in last
-                or "Max retries exceeded" in last
-                or "Tunnel connection failed" in last
-                or "ConnectTimeout" in last
-                or "ReadTimeout" in last
-                or "Caused by ProxyError" in last
-                ):
-                	bot.send_message(user_id,text=f"Proxy error : card: {cc}")
-                
-                elif 'REATTEMPT_NOT_PERMITTED.' in last: dd += 1
-                elif 'INVALID_ACCOUNT.' in last: dd += 1
-                elif 'ACCOUNT_CLOSED.' in last: dd += 1
-                elif 'INVALID_TRANSACTION_CARD_ISSUER_ACQUIRER.' in last: dd += 1
-                elif 'CVV2_FAILURE.' in last: CVV += 1
-                elif 'DO_NOT_HONOR.' in last: dd += 1
-                elif 'ACCOUNT_NOT_FOUND.' in last: dd += 1
-                elif 'PAYER_ACTION_REQUIRED' in last: dd += 1
-                elif 'PICKUP_CARD_SPECIAL_CONDITIONS.' in last: dd += 1
-                elif 'LOST_OR_STOLEN.' in last: dd += 1
-                elif 'INVALID_MERCHANT.' in last: dd += 1
+                if "Charge !" in last: charge += 1; bot.send_message(user_id, charges)
+                elif "INSUFFICIENT_FUNDS." in last: funds += 1; bot.send_message(user_id, charges)
+                elif "CVV2_FAILURE." in last: CVV += 1
                 elif 'unknown' in last: dd += 1
                 elif 'ERROR in gateway' in last: err += 1
                 else: dd += 1
@@ -502,9 +413,8 @@ def gate_ppc3(call, combo=None):  # تعديل لقبول combo
 @bot.callback_query_handler(func=lambda c: c.data.startswith("run|"))
 def run_gate(call):
     try:
-        # نفصل كل الأجزاء: run | gate | combo
         parts = call.data.split("|", 2)
-        gate = parts[1]  # اسم البوابة
+        gate = parts[1]
         combo = parts[2] if len(parts) > 2 else None
     except:
         return bot.answer_callback_query(call.id, "❌ خطأ في بيانات الزر")
@@ -520,8 +430,6 @@ def run_gate(call):
 
     threading.Thread(target=gates[gate], args=(call, combo)).start()
     bot.answer_callback_query(call.id, "🚀 Started")
-
-
 
 @bot.callback_query_handler(func=lambda c: c.data == "stop")
 def stop_cb(call):
